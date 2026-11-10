@@ -23,6 +23,7 @@
   #q { flex: 1; padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
   #q:focus { outline: none; border-color: #42b983; }
   #sep { padding: 6px 4px; border: 1px solid #ccc; border-radius: 4px; background: #fff; font-size: 13px; }
+  #hideKeys { padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; }
   .chk { font-size: 13px; white-space: nowrap; cursor: pointer; }
   #qinfo { color: #666; font-size: 13px; white-space: nowrap; }
   mark { background: #ffe082; color: inherit; border-radius: 2px; padding: 0 1px; }
@@ -84,6 +85,7 @@
         <option value="comma">콤마</option>
         <option value="nl">줄바꿈</option>
       </select>
+      <label class="chk" title="값이 단순 값인 키(name)는 그 값을 항목 이름으로 쓰고, 목록인 키(children)는 줄을 없애고 내용을 바로 아래에 표시. 비우면 사용 안 함">숨길 키 <input id="hideKeys" value="name, children" size="14"></label>
       <label class="chk" title="복사·저장되는 트리에서 배열의 [0], [1] 같은 번호 행을 없애고 내용을 바로 아래에 표시"><input type="checkbox" id="noIdx" checked> [번호] 행 제거</label>
       <button id="copyMatches" disabled title="검색에 일치한 항목의 값만 한 줄씩 복사">결과 일괄 복사</button>
     </div>
@@ -411,15 +413,39 @@
   }
 
   // ---- 트리 텍스트 (├── └──) ----
-  // node의 자식 항목 목록. [번호] 행 제거 옵션이면 배열 요소의 내용을 한 단계 위로 펼침
+  // ---- 복사/저장용 트리 만들기 ----
+  // "숨길 키"(예: name, children):
+  //   - 값이 단순 값인 키(name) → 줄은 없애고 그 값을 항목 이름으로 사용
+  //   - 값이 목록/객체인 키(children) → 키 줄은 없애고 내용을 바로 아래 단계로 표시
+  function hiddenKeys() {
+    return $('hideKeys').value.split(',').map(function (t) { return t.trim().toLowerCase(); }).filter(Boolean);
+  }
+  function isHidden(k, H) { return typeof k === 'string' && H.indexOf(k.toLowerCase()) !== -1; }
+  function labelOf(o, H) {
+    if (!isObj(o) || Array.isArray(o) || !H.length) return null;
+    var parts = [];
+    Object.keys(o).forEach(function (k) { if (isHidden(k, H) && !isObj(o[k])) parts.push(String(o[k])); });
+    return parts.length ? parts.join(' ') : null;
+  }
+
+  // node의 자식 항목 목록: {text, sub(하위 node 또는 null), path, cnt(개수 표시 대상)}
   function entriesOf(node, path) {
-    var arr = Array.isArray(node), noIdx = $('noIdx').checked, out = [];
+    var H = hiddenKeys(), arr = Array.isArray(node), noIdx = $('noIdx').checked, out = [];
     visibleKeys(node, path).forEach(function (k) {
-      var v = node[k], p = path.concat([k]);
-      if (arr && noIdx) {
-        if (isObj(v)) out = out.concat(entriesOf(v, p));
-        else out.push({ label: null, value: v, path: p });
-      } else out.push({ label: arr ? '[' + k + ']' : k, value: v, path: p });
+      var v = node[k], p = path.concat([k]), con = isObj(v), lb = labelOf(v, H);
+      if (arr) {
+        if (noIdx) {
+          if (!con) out.push({ text: leafText(v), sub: null, path: p });
+          else if (lb !== null) out.push({ text: lb, sub: v, path: p });
+          else out = out.concat(entriesOf(v, p));
+        } else {
+          out.push({ text: '[' + k + ']' + (con ? (lb !== null ? ' ' + lb : '') : ': ' + leafText(v)), sub: con ? v : null, path: p, cnt: con && lb === null });
+        }
+      } else if (isHidden(k, H)) {
+        if (con) out = out.concat(entriesOf(v, p));      // 값이 단순 값이면 이름으로 쓰이므로 줄 생략
+      } else {
+        out.push({ text: k + (con ? (lb !== null ? ': ' + lb : '') : ': ' + leafText(v)), sub: con ? v : null, path: p, cnt: con && lb === null });
+      }
     });
     return out;
   }
@@ -428,34 +454,43 @@
   function walkTree(node, prefix, path, lines, noCount) {
     var entries = entriesOf(node, path);
     entries.forEach(function (e, i) {
-      var last = i === entries.length - 1, v = e.value;
-      var text = e.label === null ? leafText(v)
-        : e.label + (isObj(v) ? (noCount ? '' : ' ' + summary(v, e.path)) : ': ' + leafText(v));
-      lines.push(prefix + (last ? '└── ' : '├── ') + text);
-      if (isObj(v)) walkTree(v, prefix + (last ? '    ' : '│   '), e.path, lines, noCount);
+      var last = i === entries.length - 1;
+      lines.push(prefix + (last ? '└── ' : '├── ') + e.text + (e.cnt && !noCount ? ' ' + summary(e.sub, e.path) : ''));
+      if (e.sub) walkTree(e.sub, prefix + (last ? '    ' : '│   '), e.path, lines, noCount);
     });
   }
 
   function toTree(root, noCount) {
-    var lines = [isObj(root) ? (fileName || 'root') + (noCount ? '' : ' ' + summary(root, [])) : leafText(root)];
+    var lb = labelOf(root, hiddenKeys());
+    var lines = [isObj(root) ? (lb !== null ? lb : (fileName || 'root') + (noCount ? '' : ' ' + summary(root, []))) : leafText(root)];
     if (isObj(root)) walkTree(root, '', [], lines, noCount);
     return lines.join(EOL);
   }
 
-  // 검색 일치 항목만 (상위 경로 [0], floors 등은 생략) 최상위에 나열하고 각 항목의 내용은 트리로
+  // 검색 일치 항목만 (상위 경로 생략) 최상위에 나열하고 각 항목의 내용은 트리로
   function toMatchTree() {
-    var lines = [];
+    var lines = [], H = hiddenKeys();
+    function emit(entries) {
+      entries.forEach(function (e) {
+        lines.push(e.text);
+        if (e.sub) walkTree(e.sub, '', e.path, lines, true);
+      });
+    }
     (function walk(v, path) {
       var arr = Array.isArray(v);
       visibleKeys(v, path).forEach(function (k) {
         var c = v[k], p = path.concat([k]);
         if (!arr && hasQ(k)) {                       // 키 일치: 해당 항목 + 하위 내용 전체
-          lines.push(k + (isObj(c) ? '' : ': ' + leafText(c)));
-          if (isObj(c)) walkTree(c, '', p, lines, true);
+          if (isHidden(k, H)) {
+            if (isObj(c)) emit(entriesOf(c, p)); else lines.push(leafText(c));
+          } else {
+            lines.push(k + (isObj(c) ? '' : ': ' + leafText(c)));
+            if (isObj(c)) walkTree(c, '', p, lines, true);
+          }
         } else if (isObj(c)) {
           walk(c, p);
         } else if (hasQ(c)) {                        // 값 일치
-          lines.push(arr ? leafText(c) : k + ': ' + leafText(c));
+          lines.push(arr || isHidden(k, H) ? leafText(c) : k + ': ' + leafText(c));
         }
       });
     })(data, []);
@@ -504,6 +539,9 @@
   // 페이지 어디에 놓아도 브라우저가 파일을 열지 않도록
   window.addEventListener('dragover', function (e) { e.preventDefault(); });
   window.addEventListener('drop', function (e) { e.preventDefault(); if (e.target !== drop && !drop.contains(e.target)) load(e.dataTransfer.files[0]); });
+
+  try { var hk = localStorage.getItem('jv-hide'); if (hk !== null) $('hideKeys').value = hk; } catch (e) {}
+  $('hideKeys').addEventListener('input', function () { try { localStorage.setItem('jv-hide', this.value); } catch (e) {} });
 
   var qTimer;
   $('q').addEventListener('input', function () {
