@@ -18,6 +18,11 @@
   button:hover { background: #f0f4f8; }
   button.on { background: #42b983; border-color: #42b983; color: #fff; }
   .count { color: #999; margin-left: 4px; }
+  .searchbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  #q { flex: 1; padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+  #q:focus { outline: none; border-color: #42b983; }
+  #qinfo { color: #666; font-size: 13px; white-space: nowrap; }
+  mark { background: #ffe082; color: inherit; border-radius: 2px; padding: 0 1px; }
   #filters { display: none; max-height: 220px; overflow: auto; border: 1px solid #ddd; border-radius: 6px;
              padding: 8px 12px; margin-bottom: 8px; font-size: 14px; }
   #filters label { cursor: pointer; white-space: nowrap; }
@@ -63,6 +68,10 @@
       <button id="copy" title="Ctrl+C">클립보드 복사</button>
       <button id="save" title="Ctrl+S">TXT 저장</button>
     </div>
+    <div class="searchbar">
+      <input id="q" type="search" placeholder="🔍 항목 검색 (키 또는 값의 일부만 입력)" autocomplete="off">
+      <span id="qinfo"></span>
+    </div>
     <div id="filters"></div>
     <div id="tree"></div>
     <div id="mind"></div>
@@ -71,7 +80,7 @@
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var data, fileName = '', nodes = [], mode = 'data', selected = {}, mm = null; // mode: 'data' = 값만, 'code' = JSON 문법 표시, 'mind' = 마인드맵
+  var data, fileName = '', nodes = [], mode = 'data', selected = {}, mm = null, query = '', shown = null; // mode: 'data' = 값만, 'code' = JSON 문법 표시, 'mind' = 마인드맵
 
   var isObj = function (v) { return v !== null && typeof v === 'object'; };
   var leafText = function (v) { return (typeof v === 'string' && mode === 'code') ? JSON.stringify(v) : String(v); };
@@ -80,8 +89,49 @@
   var SEP = '\u0001';
   var pk = function (path) { return path.join(SEP); };
   var visibleKeys = function (v, path) {
-    return keysOf(v).filter(function (k) { return selected[pk(path.concat([k]))] !== false; });
+    return keysOf(v).filter(function (k) {
+      var key = pk(path.concat([k]));
+      return selected[key] !== false && (!shown || shown[key]);
+    });
   };
+
+  // ---- 검색 ----
+  // 키(객체 키만) 또는 값에 검색어가 포함된 항목 + 그 상위 경로 + (키가 일치한 경우) 하위 전체를 표시
+  var isIndexLabel = function (l) { return typeof l === 'number' || /^\[\d+\]$/.test(l); };
+  var hasQ = function (t) { return String(t).toLowerCase().indexOf(query) !== -1; };
+  function computeSearch() {
+    shown = null;
+    $('qinfo').textContent = '';
+    if (!query || !isObj(data)) return;
+    shown = {};
+    var hits = 0;
+    (function walk(v, path, forced) {
+      var arr = Array.isArray(v), any = false;
+      keysOf(v).forEach(function (k) {
+        var p = path.concat([k]), c = v[k], container = isObj(c);
+        var keyHit = !arr && hasQ(k), valHit = !container && hasQ(c);
+        var self = keyHit || valHit;
+        if (self) hits++;
+        var below = container ? walk(c, p, forced || keyHit) : false;
+        if (forced || self || below) { shown[pk(p)] = true; any = true; }
+      });
+      return any;
+    })(data, [], false);
+    $('qinfo').textContent = hits ? hits + '개 일치' : '일치 항목 없음';
+  }
+  // 일치 부분을 <mark>로 강조
+  function setText(elm, text, plain) {
+    text = String(text);
+    if (!query || plain) { elm.textContent = text; return; }
+    var low = text.toLowerCase(), i = 0, idx;
+    elm.textContent = '';
+    while ((idx = low.indexOf(query, i)) !== -1) {
+      if (idx > i) elm.appendChild(document.createTextNode(text.slice(i, idx)));
+      elm.appendChild(el('mark', null, text.slice(idx, idx + query.length)));
+      i = idx + query.length;
+    }
+    elm.appendChild(document.createTextNode(text.slice(i)));
+  }
   var summary = function (v, path) {
     var n = visibleKeys(v, path).length;
     if (mode !== 'code') return '(' + n + ')';
@@ -102,12 +152,16 @@
     var arrow = el('span', 'arrow');
     row.appendChild(arrow);
     if (label !== null) {
-      row.appendChild(el('span', 'key', label));
+      var ks = el('span', 'key');
+      setText(ks, label, isIndexLabel(label));
+      row.appendChild(ks);
       row.appendChild(el('span', 'punct', ':'));
     }
     if (!isObj(value)) {
       var t = value === null ? 'null' : typeof value;
-      row.appendChild(el('span', t, leafText(value)));
+      var vs = el(t === 'object' ? 'span' : 'span', t);
+      setText(vs, leafText(value));
+      row.appendChild(vs);
       node.appendChild(row);
       return node;
     }
@@ -134,7 +188,7 @@
       }
     };
     row.addEventListener('click', function () { api.set(!api.open); });
-    api.set(depth < 2);
+    api.set(query ? true : depth < 2);
     nodes.push(api);
     return node;
   }
@@ -152,7 +206,7 @@
       api.open = open;
     } };
     row.addEventListener('click', function () { api.set(!api.open); });
-    api.set(depth < 2);
+    api.set(query ? true : depth < 2);
     nodes.push(api);
     return node;
   }
@@ -259,7 +313,8 @@
   mctx.font = '13px "Segoe UI", sans-serif';
 
   function mmBuild(label, value, depth, path) {
-    var n = { label: label, value: value, depth: depth, kids: [], container: isObj(value), open: depth < 3 };
+    var n = { label: label, value: value, depth: depth, kids: [], container: isObj(value), open: !!query || depth < 3 };
+    n.hit = !!query && ((label !== null && !isIndexLabel(label) && hasQ(label)) || (!n.container && hasQ(value)));
     if (n.container) {
       var arr = Array.isArray(value);
       visibleKeys(value, path).forEach(function (k) {
@@ -311,7 +366,7 @@
       g.appendChild(title);
       g.appendChild(svgEl('rect', {
         x: n.x, y: n.y - 13, width: n.w, height: 26, rx: 13,
-        fill: n.container ? color : '#fff', stroke: color, 'stroke-width': 1.5
+        fill: n.container ? color : '#fff', stroke: n.hit ? '#ff9800' : color, 'stroke-width': n.hit ? 3.5 : 1.5
       }));
       var t = svgEl('text', { x: n.x + padX, y: n.y + 4.5, fill: n.container ? '#fff' : '#2c3e50' });
       t.textContent = n.text;
@@ -364,6 +419,7 @@
         data = JSON.parse(String(r.result).replace(/^﻿/, ''));
         fileName = file.name;
         selected = {};
+        computeSearch();
         $('error').textContent = '';
         renderFilters();
         render();
@@ -387,6 +443,21 @@
   // 페이지 어디에 놓아도 브라우저가 파일을 열지 않도록
   window.addEventListener('dragover', function (e) { e.preventDefault(); });
   window.addEventListener('drop', function (e) { e.preventDefault(); if (e.target !== drop && !drop.contains(e.target)) load(e.dataTransfer.files[0]); });
+
+  var qTimer;
+  $('q').addEventListener('input', function () {
+    var v = this.value;
+    clearTimeout(qTimer);
+    qTimer = setTimeout(function () {
+      query = v.trim().toLowerCase();
+      if (data === undefined) return;
+      computeSearch();
+      render();
+    }, 150);
+  });
+  $('q').addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { this.value = ''; this.dispatchEvent(new Event('input')); }
+  });
 
   function setMode(m) {
     mode = m;
