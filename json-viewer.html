@@ -55,8 +55,8 @@
       <button id="modeMind">마인드맵</button>
       <button id="expand">모두 펼치기</button>
       <button id="collapse">모두 접기</button>
-      <button id="copy">클립보드 복사</button>
-      <button id="save">TXT 저장</button>
+      <button id="copy" title="Ctrl+C">클립보드 복사</button>
+      <button id="save" title="Ctrl+S">TXT 저장</button>
     </div>
     <div id="filters"></div>
     <div id="tree"></div>
@@ -348,7 +348,8 @@
   $('expand').addEventListener('click', function () { if (mode === 'mind') mmSetAll(true); else nodes.forEach(function (n) { n.set(true); }); });
   $('collapse').addEventListener('click', function () { if (mode === 'mind') mmSetAll(false); else nodes.forEach(function (n) { n.set(false); }); });
 
-  $('copy').addEventListener('click', function () {
+  function doCopy() {
+    if (data === undefined) return;
     var text = toTree(data), btn = $('copy');
     function done() { btn.textContent = '복사됨 ✓'; setTimeout(function () { btn.textContent = '클립보드 복사'; }, 1500); }
     function fallback() {
@@ -359,15 +360,34 @@
     }
     if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
     else fallback();
-  });
+  }
+  $('copy').addEventListener('click', doCopy);
 
-  $('save').addEventListener('click', function () {
+  function doSave() {
+    if (data === undefined) return;
     var blob = new Blob([toTree(data)], { type: 'text/plain;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = (fileName.replace(/\.json$/i, '') || 'output') + '.txt';
     a.click();
     URL.revokeObjectURL(a.href);
+  }
+  $('save').addEventListener('click', doSave);
+
+  // 단축키: Ctrl/Cmd+C = 현재 화면 복사(텍스트를 선택한 경우는 기본 복사), Ctrl/Cmd+S = TXT 저장
+  document.addEventListener('keydown', function (e) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || data === undefined) return;
+    var k = e.key.toLowerCase();
+    if (k === 'c') {
+      var sel = window.getSelection && String(window.getSelection());
+      var tag = document.activeElement && document.activeElement.tagName;
+      if (sel || tag === 'INPUT' || tag === 'TEXTAREA') return;
+      e.preventDefault();
+      doCopy();
+    } else if (k === 's') {
+      e.preventDefault();
+      doSave();
+    }
   });
 })();
 </script>
