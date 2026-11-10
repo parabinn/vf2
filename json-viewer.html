@@ -22,6 +22,7 @@
   .searchbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
   #q { flex: 1; padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
   #q:focus { outline: none; border-color: #42b983; }
+  #sep { padding: 6px 4px; border: 1px solid #ccc; border-radius: 4px; background: #fff; font-size: 13px; }
   #qinfo { color: #666; font-size: 13px; white-space: nowrap; }
   mark { background: #ffe082; color: inherit; border-radius: 2px; padding: 0 1px; }
   #filters { display: none; max-height: 220px; overflow: auto; border: 1px solid #ddd; border-radius: 6px;
@@ -72,6 +73,11 @@
     <div class="searchbar">
       <input id="q" type="search" placeholder="🔍 항목 검색 (키 또는 값의 일부만 입력)" autocomplete="off">
       <span id="qinfo"></span>
+      <select id="sep" title="일괄 복사 구분 방식">
+        <option value="both">콤마 + 줄바꿈</option>
+        <option value="comma">콤마</option>
+        <option value="nl">줄바꿈</option>
+      </select>
       <button id="copyMatches" disabled title="검색에 일치한 항목의 값만 한 줄씩 복사">결과 일괄 복사</button>
     </div>
     <div id="filters"></div>
@@ -429,6 +435,7 @@
         $('error').textContent = '';
         renderFilters();
         render();
+        $('q').focus();
       } catch (e) {
         $('error').textContent = '⚠ JSON 파싱 실패: ' + e.message;
         $('viewer').style.display = 'none';
@@ -500,8 +507,18 @@
     })(data, [], false);
     if (!lines.length) { $('error').textContent = '⚠ 복사할 검색 결과가 없습니다.'; return; }
     $('error').textContent = '';
-    copyText(lines.join(EOL), $('copyMatches'), lines.length + '줄 복사됨 ✓');
+    copyText(joinMatches(lines), $('copyMatches'), lines.length + '줄 복사됨 ✓');
   }
+
+  // 구분 방식: 콤마 + 줄바꿈("a,⏎b") / 콤마("a, b") / 줄바꿈
+  function joinMatches(lines) {
+    var m = $('sep').value;
+    if (m === 'comma') return lines.join(', ');
+    if (m === 'nl') return lines.join(EOL);
+    return lines.join(',' + EOL);
+  }
+  try { var savedSep = localStorage.getItem('jv-sep'); if (savedSep) $('sep').value = savedSep; } catch (e) {}
+  $('sep').addEventListener('change', function () { try { localStorage.setItem('jv-sep', this.value); } catch (e) {} });
 
   function copyText(text, btn, doneMsg) {
     var orig = btn.getAttribute('data-label') || btn.textContent;
@@ -535,9 +552,10 @@
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || data === undefined) return;
     var k = e.key.toLowerCase();
     if (k === 'c') {
-      var sel = window.getSelection && String(window.getSelection());
-      var tag = document.activeElement && document.activeElement.tagName;
-      if (sel || tag === 'INPUT' || tag === 'TEXTAREA') return;
+      var ae = document.activeElement;
+      var inField = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+      var hasSel = inField ? ae.selectionStart !== ae.selectionEnd : !!String(window.getSelection());
+      if (hasSel) return;
       e.preventDefault();
       doCopy();
     } else if (k === 's') {
