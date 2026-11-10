@@ -86,6 +86,7 @@
         <option value="nl">줄바꿈</option>
       </select>
       <label class="chk" title="값이 단순 값인 키(name)는 그 값을 항목 이름으로 쓰고, 목록인 키(children)는 줄을 없애고 내용을 바로 아래에 표시. 비우면 사용 안 함">숨길 키 <input id="hideKeys" value="name, children" size="14"></label>
+      <label class="chk" title="복사·저장되는 트리에서 값 앞의 '항목명: ' 글자를 없애고 값만 표시 (하위 항목이 있는 줄의 이름은 유지)"><input type="checkbox" id="noKeys" checked> 항목명 숨김(값만)</label>
       <label class="chk" title="복사·저장되는 트리에서 배열의 [0], [1] 같은 번호 행을 없애고 내용을 바로 아래에 표시"><input type="checkbox" id="noIdx" checked> [번호] 행 제거</label>
       <button id="copyMatches" disabled title="검색에 일치한 항목의 값만 한 줄씩 복사">결과 일괄 복사</button>
     </div>
@@ -420,6 +421,9 @@
   function hiddenKeys() {
     return $('hideKeys').value.split(',').map(function (t) { return t.trim().toLowerCase(); }).filter(Boolean);
   }
+  // 값 앞의 "항목명: " 표시 여부 (끄면 값만 출력)
+  function kv(k, v) { return $('noKeys').checked ? leafText(v) : k + ': ' + leafText(v); }
+  function kl(k, t) { return $('noKeys').checked ? t : k + ': ' + t; }
   function isHidden(k, H) { return typeof k === 'string' && H.indexOf(k.toLowerCase()) !== -1; }
   function labelOf(o, H) {
     if (!isObj(o) || Array.isArray(o) || !H.length) return null;
@@ -448,7 +452,7 @@
           else if (lb !== null) out.push({ text: lb, sub: v, path: p });
           else {
             var hk = Array.isArray(v) ? null : headerKey(v, p, H);
-            if (hk !== null) out.push({ text: hk + ': ' + leafText(v[hk]), sub: v, path: p, skip: hk });
+            if (hk !== null) out.push({ text: kv(hk, v[hk]), sub: v, path: p, skip: hk });
             else out = out.concat(entriesOf(v, p));
           }
         } else {
@@ -457,7 +461,7 @@
       } else if (isHidden(k, H)) {
         if (con) out = out.concat(entriesOf(v, p));      // 값이 단순 값이면 이름으로 쓰이므로 줄 생략
       } else {
-        out.push({ text: k + (con ? (lb !== null ? ': ' + lb : '') : ': ' + leafText(v)), sub: con ? v : null, path: p, cnt: con && lb === null });
+        out.push({ text: con ? (lb !== null ? kl(k, lb) : k) : kv(k, v), sub: con ? v : null, path: p, cnt: con && lb === null });
       }
     });
     return out;
@@ -493,11 +497,11 @@
             if (isObj(c)) entriesOf(c, p).forEach(function (e) { own.push({ text: e.text, sub: e.sub, path: e.path, skip: e.skip, kids: [] }); });
             else own.push({ text: leafText(c), kids: [] });
           } else if (isObj(c)) own.push({ text: k, sub: c, path: p, kids: [] });
-          else own.push({ text: k + ': ' + leafText(c), kids: [] });
+          else own.push({ text: kv(k, c), kids: [] });
         } else if (isObj(c)) {
           below = below.concat(forest(c, p));
         } else if (hasQ(c)) {                        // 값 일치
-          own.push({ text: arr || isHidden(k, H) ? leafText(c) : k + ': ' + leafText(c), kids: [] });
+          own.push({ text: arr || isHidden(k, H) ? leafText(c) : kv(k, c), kids: [] });
         }
       });
       if (!own.length) return below;
