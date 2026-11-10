@@ -428,16 +428,29 @@
     return parts.length ? parts.join(' ') : null;
   }
 
-  // node의 자식 항목 목록: {text, sub(하위 node 또는 null), path, cnt(개수 표시 대상)}
-  function entriesOf(node, path) {
+  // 라벨(name)이 없는 배열 요소 객체의 "머리글" 키: 숨김이 아닌 첫 번째 단순 값 키
+  function headerKey(o, path, H) {
+    var ks = visibleKeys(o, path);
+    for (var i = 0; i < ks.length; i++) if (!isObj(o[ks[i]]) && !isHidden(ks[i], H)) return ks[i];
+    return null;
+  }
+
+  // node의 자식 항목 목록: {text, sub(하위 node 또는 null), path, skip(sub에서 머리글로 쓴 키), cnt(개수 표시 대상)}
+  // 배열 요소(객체)는 [번호] 줄 없이 하나의 항목이 되고, 나머지 필드와 children 내용은 그 아래 단계로 들어가 부모-자식 관계를 유지
+  function entriesOf(node, path, skip) {
     var H = hiddenKeys(), arr = Array.isArray(node), noIdx = $('noIdx').checked, out = [];
     visibleKeys(node, path).forEach(function (k) {
+      if (skip !== undefined && String(k) === String(skip)) return;
       var v = node[k], p = path.concat([k]), con = isObj(v), lb = labelOf(v, H);
       if (arr) {
         if (noIdx) {
           if (!con) out.push({ text: leafText(v), sub: null, path: p });
           else if (lb !== null) out.push({ text: lb, sub: v, path: p });
-          else out = out.concat(entriesOf(v, p));
+          else {
+            var hk = Array.isArray(v) ? null : headerKey(v, p, H);
+            if (hk !== null) out.push({ text: hk + ': ' + leafText(v[hk]), sub: v, path: p, skip: hk });
+            else out = out.concat(entriesOf(v, p));
+          }
         } else {
           out.push({ text: '[' + k + ']' + (con ? (lb !== null ? ' ' + lb : '') : ': ' + leafText(v)), sub: con ? v : null, path: p, cnt: con && lb === null });
         }
@@ -451,12 +464,12 @@
   }
 
   // node 하위를 ├── └── 로 lines에 추가
-  function walkTree(node, prefix, path, lines, noCount) {
-    var entries = entriesOf(node, path);
+  function walkTree(node, prefix, path, lines, noCount, skip) {
+    var entries = entriesOf(node, path, skip);
     entries.forEach(function (e, i) {
       var last = i === entries.length - 1;
       lines.push(prefix + (last ? '└── ' : '├── ') + e.text + (e.cnt && !noCount ? ' ' + summary(e.sub, e.path) : ''));
-      if (e.sub) walkTree(e.sub, prefix + (last ? '    ' : '│   '), e.path, lines, noCount);
+      if (e.sub) walkTree(e.sub, prefix + (last ? '    ' : '│   '), e.path, lines, noCount, e.skip);
     });
   }
 
@@ -467,33 +480,42 @@
     return lines.join(EOL);
   }
 
-  // 검색 일치 항목만 (상위 경로 생략) 최상위에 나열하고 각 항목의 내용은 트리로
+  // 검색 일치 항목만 트리로. 일치하지 않는 중간 단계는 건너뛰되,
+  // 일치 항목 사이의 부모-자식(상하) 관계는 원래 JSON 구조 그대로 들여쓰기로 유지
   function toMatchTree() {
-    var lines = [], H = hiddenKeys();
-    function emit(entries) {
-      entries.forEach(function (e) {
-        lines.push(e.text);
-        if (e.sub) walkTree(e.sub, '', e.path, lines, true);
-      });
-    }
-    (function walk(v, path) {
-      var arr = Array.isArray(v);
+    var H = hiddenKeys(), lines = [];
+    function forest(v, path) {
+      var arr = Array.isArray(v), own = [], below = [];
       visibleKeys(v, path).forEach(function (k) {
         var c = v[k], p = path.concat([k]);
         if (!arr && hasQ(k)) {                       // 키 일치: 해당 항목 + 하위 내용 전체
           if (isHidden(k, H)) {
-            if (isObj(c)) emit(entriesOf(c, p)); else lines.push(leafText(c));
-          } else {
-            lines.push(k + (isObj(c) ? '' : ': ' + leafText(c)));
-            if (isObj(c)) walkTree(c, '', p, lines, true);
-          }
+            if (isObj(c)) entriesOf(c, p).forEach(function (e) { own.push({ text: e.text, sub: e.sub, path: e.path, skip: e.skip, kids: [] }); });
+            else own.push({ text: leafText(c), kids: [] });
+          } else if (isObj(c)) own.push({ text: k, sub: c, path: p, kids: [] });
+          else own.push({ text: k + ': ' + leafText(c), kids: [] });
         } else if (isObj(c)) {
-          walk(c, p);
+          below = below.concat(forest(c, p));
         } else if (hasQ(c)) {                        // 값 일치
-          lines.push(arr || isHidden(k, H) ? leafText(c) : k + ': ' + leafText(c));
+          own.push({ text: arr || isHidden(k, H) ? leafText(c) : k + ': ' + leafText(c), kids: [] });
         }
       });
-    })(data, []);
+      if (!own.length) return below;
+      // 같은 객체 안의 일치 항목은 형제, 그 아래 단계의 일치 항목은 첫 일치 항목의 자식
+      var host = own.filter(function (n) { return !n.sub; })[0];
+      if (host) { host.kids = host.kids.concat(below); return own; }
+      return own.concat(below);
+    }
+    function render(nodes, prefix, top) {
+      nodes.forEach(function (n, i) {
+        var last = i === nodes.length - 1;
+        lines.push(top ? n.text : prefix + (last ? '└── ' : '├── ') + n.text);
+        var cp = top ? '' : prefix + (last ? '    ' : '│   ');
+        if (n.sub) walkTree(n.sub, cp, n.path, lines, true, n.skip);
+        if (n.kids.length) render(n.kids, cp, false);
+      });
+    }
+    render(forest(data, []), '', true);
     return lines.join(EOL);
   }
 
