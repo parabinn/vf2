@@ -48,9 +48,28 @@ export default {
     }
   },
   computed: {
-    text () { return JSON.stringify(this.parsed, null, 2) }
+    text () { return this.toTree(this.parsed) }
   },
   methods: {
+    // ├── └── │ 문자로 트리 텍스트 생성
+    toTree (root) {
+      const isObj = v => v !== null && typeof v === 'object'
+      const leaf = v => typeof v === 'string' ? JSON.stringify(v) : String(v)
+      const summary = v => Array.isArray(v) ? (v.length ? `[${v.length}]` : '[]') : '{}'
+      const lines = [isObj(root) ? (this.fileName || 'root') + ' ' + summary(root) : leaf(root)]
+      const walk = (node, prefix) => {
+        const keys = Array.isArray(node) ? node.map((_, i) => i) : Object.keys(node)
+        keys.forEach((k, i) => {
+          const last = i === keys.length - 1
+          const v = node[k]
+          const name = Array.isArray(node) ? `[${k}]` : k
+          lines.push(prefix + (last ? '└── ' : '├── ') + name + (isObj(v) ? ' ' + summary(v) : ': ' + leaf(v)))
+          if (isObj(v)) walk(v, prefix + (last ? '    ' : '│   '))
+        })
+      }
+      if (isObj(root)) walk(root, '')
+      return lines.join('\n')
+    },
     onDrop (e) {
       this.dragging = false
       this.load(e.dataTransfer.files[0])
