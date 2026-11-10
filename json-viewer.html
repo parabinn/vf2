@@ -25,7 +25,10 @@
   #sep { padding: 6px 4px; border: 1px solid #ccc; border-radius: 4px; background: #fff; font-size: 13px; }
   #qinfo { color: #666; font-size: 13px; white-space: nowrap; }
   mark { background: #ffe082; color: inherit; border-radius: 2px; padding: 0 1px; }
-  #filters { display: none; max-height: 220px; overflow: auto; border: 1px solid #ddd; border-radius: 6px;
+  #filters summary { cursor: pointer; font-weight: bold; }
+  #fbody { max-height: 220px; overflow: auto; margin-top: 6px; }
+  #drop.compact { padding: 8px; font-size: 13px; }
+  #filters { display: none; border: 1px solid #ddd; border-radius: 6px;
              padding: 8px 12px; margin-bottom: 8px; font-size: 14px; }
   #filters label { cursor: pointer; white-space: nowrap; }
   #filters label.off { color: #aaa; }
@@ -39,7 +42,7 @@
   #mind .nd { cursor: default; } #mind .nd.cont { cursor: pointer; }
   #mind .nd.cont:hover rect { filter: brightness(1.1); }
   #mind path { fill: none; stroke: #b8c4bf; stroke-width: 1.5; }
-  #tree { border: 1px solid #ddd; border-radius: 6px; padding: 12px; overflow: auto; max-height: 70vh;
+  #tree { border: 1px solid #ddd; border-radius: 6px; padding: 12px; overflow: auto;
           font-family: Consolas, Menlo, monospace; font-size: 14px; line-height: 1.6; }
   .row { white-space: pre-wrap; word-break: break-all; }
   .row.click { cursor: pointer; }
@@ -74,13 +77,14 @@
       <input id="q" type="search" placeholder="🔍 항목 검색 (키 또는 값의 일부만 입력)" autocomplete="off">
       <span id="qinfo"></span>
       <select id="sep" title="일괄 복사 구분 방식">
+        <option value="tree">트리 형태</option>
         <option value="both">콤마 + 줄바꿈</option>
         <option value="comma">콤마</option>
         <option value="nl">줄바꿈</option>
       </select>
       <button id="copyMatches" disabled title="검색에 일치한 항목의 값만 한 줄씩 복사">결과 일괄 복사</button>
     </div>
-    <div id="filters"></div>
+    <details id="filters"><summary>항목 선택 (체크박스로 보고 싶은 항목만)</summary><div id="fbody"></div></details>
     <div id="tree"></div>
     <div id="mind"></div>
   </div>
@@ -88,7 +92,7 @@
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var data, fileName = '', nodes = [], mode = 'data', selected = {}, mm = null, query = '', shown = null; // mode: 'data' = 값만, 'code' = JSON 문법 표시, 'mind' = 마인드맵
+  var data, fileName = '', nodes = [], mode = 'data', selected = {}, mm = null, query = '', shown = null, total = 0, openAll = true; // mode: 'data' = 값만, 'code' = JSON 문법 표시, 'mind' = 마인드맵
 
   // Windows 메모장 등은 LF만 있으면 한 줄로 붙여넣으므로 Windows에서는 CRLF 사용
   var EOL = /Win/i.test(navigator.platform || navigator.userAgent) ? '\r\n' : '\n';
@@ -200,7 +204,7 @@
       }
     };
     row.addEventListener('click', function () { api.set(!api.open); });
-    api.set(query ? true : depth < 2);
+    api.set(query || openAll ? true : depth < 2);
     nodes.push(api);
     return node;
   }
@@ -218,7 +222,7 @@
       api.open = open;
     } };
     row.addEventListener('click', function () { api.set(!api.open); });
-    api.set(query ? true : depth < 2);
+    api.set(query || openAll ? true : depth < 2);
     nodes.push(api);
     return node;
   }
@@ -295,11 +299,11 @@
   }
 
   function renderFilters() {
-    var box = $('filters');
+    var box = $('fbody'), wrap = $('filters');
     box.textContent = '';
     fstate = [];
     var has = isObj(data) && keysOf(data).length > 0;
-    box.style.display = has ? 'block' : 'none';
+    wrap.style.display = has ? 'block' : 'none';
     if (!has) return;
     allBox = document.createElement('input');
     allBox.type = 'checkbox';
@@ -325,7 +329,7 @@
   mctx.font = '13px "Segoe UI", sans-serif';
 
   function mmBuild(label, value, depth, path) {
-    var n = { label: label, value: value, depth: depth, kids: [], container: isObj(value), open: !!query || depth < 3 };
+    var n = { label: label, value: value, depth: depth, kids: [], container: isObj(value), open: !!query || depth < 3 || total <= 200 };
     n.hit = !!query && ((label !== null && !isIndexLabel(label) && hasQ(label)) || (!n.container && hasQ(value)));
     if (n.container) {
       var arr = Array.isArray(value);
@@ -404,14 +408,14 @@
   }
 
   // ---- 트리 텍스트 (├── └──) ----
-  function toTree(root) {
-    var lines = [isObj(root) ? (fileName || 'root') + ' ' + summary(root, []) : leafText(root)];
+  function toTree(root, noCount) {
+    var lines = [isObj(root) ? (fileName || 'root') + (noCount ? '' : ' ' + summary(root, [])) : leafText(root)];
     (function walk(node, prefix, path) {
       var keys = visibleKeys(node, path), arr = Array.isArray(node);
       keys.forEach(function (k, i) {
         var last = i === keys.length - 1, v = node[k];
         lines.push(prefix + (last ? '└── ' : '├── ') + (arr ? '[' + k + ']' : k) +
-                   (isObj(v) ? ' ' + summary(v, path.concat([k])) : ': ' + leafText(v)));
+                   (isObj(v) ? (noCount ? '' : ' ' + summary(v, path.concat([k]))) : ': ' + leafText(v)));
         if (isObj(v)) walk(v, prefix + (last ? '    ' : '│   '), path.concat([k]));
       });
     })(isObj(root) ? root : {}, '', []);
@@ -431,9 +435,13 @@
         data = JSON.parse(String(r.result).replace(/^﻿/, ''));
         fileName = file.name;
         selected = {};
+        total = 0;
+        (function count(v) { if (isObj(v)) keysOf(v).forEach(function (k) { total++; count(v[k]); }); })(data);
+        openAll = total <= 3000; // 너무 큰 JSON만 2단계까지 펼침
         computeSearch();
         $('error').textContent = '';
         renderFilters();
+        $('drop').classList.add('compact');
         render();
         $('q').focus();
       } catch (e) {
@@ -491,10 +499,15 @@
     copyText(toTree(data), $('copy'));
   }
 
-  // 검색 일치 항목의 값만 한 줄씩(줄바꿈 구분) 일괄 복사
+  // 검색 일치 항목 일괄 복사 (트리 형태 / 값만 구분자로)
   function doCopyMatches() {
     if (data === undefined || !query) return;
     var lines = [];
+    if ($('sep').value === 'tree') {
+      $('error').textContent = '';
+      copyText(toTree(data, true), $('copyMatches'), '트리 복사됨 ✓');
+      return;
+    }
     (function walk(v, path, forced) {
       var arr = Array.isArray(v);
       visibleKeys(v, path).forEach(function (k) {
