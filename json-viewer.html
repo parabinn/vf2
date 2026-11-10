@@ -15,6 +15,7 @@
   .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 16px 0 8px; }
   #name { font-weight: bold; margin-right: auto; }
   button { padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
   button:hover { background: #f0f4f8; }
   button.on { background: #42b983; border-color: #42b983; color: #fff; }
   .count { color: #999; margin-left: 4px; }
@@ -71,6 +72,7 @@
     <div class="searchbar">
       <input id="q" type="search" placeholder="🔍 항목 검색 (키 또는 값의 일부만 입력)" autocomplete="off">
       <span id="qinfo"></span>
+      <button id="copyMatches" disabled title="검색에 일치한 항목만 '경로: 값'으로 복사">결과 일괄 복사</button>
     </div>
     <div id="filters"></div>
     <div id="tree"></div>
@@ -102,6 +104,7 @@
   function computeSearch() {
     shown = null;
     $('qinfo').textContent = '';
+    $('copyMatches').disabled = !query;
     if (!query || !isObj(data)) return;
     shown = {};
     var hits = 0;
@@ -118,6 +121,7 @@
       return any;
     })(data, [], false);
     $('qinfo').textContent = hits ? hits + '개 일치' : '일치 항목 없음';
+    $('copyMatches').disabled = !hits;
   }
   // 일치 부분을 <mark>로 강조
   function setText(elm, text, plain) {
@@ -475,8 +479,34 @@
 
   function doCopy() {
     if (data === undefined) return;
-    var text = toTree(data), btn = $('copy');
-    function done() { btn.textContent = '복사됨 ✓'; setTimeout(function () { btn.textContent = '클립보드 복사'; }, 1500); }
+    copyText(toTree(data), $('copy'));
+  }
+
+  // 검색 일치 항목만 "경로: 값" 한 줄씩 일괄 복사
+  function doCopyMatches() {
+    if (data === undefined || !query) return;
+    var lines = [];
+    (function walk(v, path, pstr, forced) {
+      var arr = Array.isArray(v);
+      visibleKeys(v, path).forEach(function (k) {
+        var c = v[k], p = path.concat([k]);
+        var ps = arr ? pstr + '[' + k + ']' : (pstr ? pstr + '.' + k : String(k));
+        var keyHit = !arr && hasQ(k), f = forced || keyHit;
+        if (isObj(c)) {
+          if (!visibleKeys(c, p).length) { if (f) lines.push(ps + ': ' + (Array.isArray(c) ? '[]' : '{}')); }
+          else walk(c, p, ps, f);
+        } else if (f || hasQ(c)) lines.push(ps + ': ' + String(c));
+      });
+    })(data, [], '', false);
+    if (!lines.length) { $('error').textContent = '⚠ 복사할 검색 결과가 없습니다.'; return; }
+    $('error').textContent = '';
+    copyText(lines.join('\n'), $('copyMatches'), lines.length + '줄 복사됨 ✓');
+  }
+
+  function copyText(text, btn, doneMsg) {
+    var orig = btn.getAttribute('data-label') || btn.textContent;
+    btn.setAttribute('data-label', orig);
+    function done() { btn.textContent = doneMsg || '복사됨 ✓'; setTimeout(function () { btn.textContent = orig; }, 1500); }
     function fallback() {
       var ta = document.createElement('textarea');
       ta.value = text; document.body.appendChild(ta); ta.select();
@@ -487,6 +517,7 @@
     else fallback();
   }
   $('copy').addEventListener('click', doCopy);
+  $('copyMatches').addEventListener('click', doCopyMatches);
 
   function doSave() {
     if (data === undefined) return;
