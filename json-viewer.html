@@ -18,6 +18,15 @@
   button:hover { background: #f0f4f8; }
   button.on { background: #42b983; border-color: #42b983; color: #fff; }
   .count { color: #999; margin-left: 4px; }
+  #filters { display: none; gap: 4px 14px; flex-wrap: wrap; align-items: center; max-height: 96px; overflow: auto;
+             border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; font-size: 14px; }
+  #filters label { cursor: pointer; white-space: nowrap; }
+  #filters .all { font-weight: bold; padding-right: 10px; border-right: 1px solid #ddd; }
+  #mind { display: none; border: 1px solid #ddd; border-radius: 6px; overflow: auto; max-height: 70vh; background: #fafcfb; }
+  #mind svg { display: block; font-family: -apple-system, "Segoe UI", sans-serif; font-size: 13px; }
+  #mind .nd { cursor: default; } #mind .nd.cont { cursor: pointer; }
+  #mind .nd.cont:hover rect { filter: brightness(1.1); }
+  #mind path { fill: none; stroke: #b8c4bf; stroke-width: 1.5; }
   #tree { border: 1px solid #ddd; border-radius: 6px; padding: 12px; overflow: auto; max-height: 70vh;
           font-family: Consolas, Menlo, monospace; font-size: 14px; line-height: 1.6; }
   .row { white-space: pre-wrap; word-break: break-all; }
@@ -43,26 +52,35 @@
       <span id="name"></span>
       <button id="modeData" class="on">데이터 보기</button>
       <button id="modeCode">코드 보기</button>
+      <button id="modeMind">마인드맵</button>
       <button id="expand">모두 펼치기</button>
       <button id="collapse">모두 접기</button>
       <button id="copy">클립보드 복사</button>
       <button id="save">TXT 저장</button>
     </div>
+    <div id="filters"></div>
     <div id="tree"></div>
+    <div id="mind"></div>
   </div>
 </div>
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var data, fileName = '', nodes = [], mode = 'data'; // 'data' = 값만, 'code' = JSON 문법 표시
+  var data, fileName = '', nodes = [], mode = 'data', selected = {}, mm = null; // mode: 'data' = 값만, 'code' = JSON 문법 표시, 'mind' = 마인드맵
 
   var isObj = function (v) { return v !== null && typeof v === 'object'; };
   var leafText = function (v) { return (typeof v === 'string' && mode === 'code') ? JSON.stringify(v) : String(v); };
-  var summary = function (v) {
-    if (mode === 'data') return '(' + keysOf(v).length + ')';
-    return Array.isArray(v) ? (v.length ? '[' + v.length + ']' : '[]') : '{}';
-  };
   var keysOf = function (v) { return Array.isArray(v) ? v.map(function (_, i) { return i; }) : Object.keys(v); };
+  // 최상위(depth 0) 항목은 체크박스로 선택된 것만 표시
+  var visibleKeys = function (v, depth) {
+    var keys = keysOf(v);
+    return depth === 0 ? keys.filter(function (k) { return selected[k] !== false; }) : keys;
+  };
+  var summary = function (v, depth) {
+    var n = visibleKeys(v, depth === undefined ? 1 : depth).length;
+    if (mode !== 'code') return '(' + n + ')';
+    return Array.isArray(v) ? (n ? '[' + n + ']' : '[]') : '{}';
+  };
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -87,7 +105,7 @@
       node.appendChild(row);
       return node;
     }
-    var arr = Array.isArray(value), keys = keysOf(value);
+    var arr = Array.isArray(value), keys = visibleKeys(value, depth);
     row.classList.add('click');
     if (mode === 'data') return buildDataContainer(node, row, arrow, arr, keys, value, depth);
     row.appendChild(el('span', 'punct', arr ? '[' : '{'));
@@ -135,25 +153,147 @@
 
   function render() {
     nodes = [];
-    var tree = $('tree');
+    var tree = $('tree'), isMind = mode === 'mind';
     tree.textContent = '';
-    tree.appendChild(buildNode(mode === 'data' && isObj(data) ? fileName : null, data, 0));
+    tree.style.display = isMind ? 'none' : '';
+    $('mind').style.display = isMind ? 'block' : 'none';
+    if (isMind) mm = mmBuild(isObj(data) ? fileName : null, data, 0), drawMind();
+    else tree.appendChild(buildNode(mode === 'data' && isObj(data) ? fileName : null, data, 0));
     $('name').textContent = fileName;
     $('viewer').style.display = 'block';
   }
 
+  // ---- 최상위 항목 체크박스 ----
+  function renderFilters() {
+    var box = $('filters');
+    box.textContent = '';
+    var keys = isObj(data) ? keysOf(data) : [];
+    box.style.display = keys.length ? 'flex' : 'none';
+    if (!keys.length) return;
+    var allBox = document.createElement('input');
+    allBox.type = 'checkbox';
+    allBox.checked = true;
+    var allLab = el('label', 'all');
+    allLab.appendChild(allBox);
+    allLab.appendChild(document.createTextNode(' 전체'));
+    box.appendChild(allLab);
+    var boxes = [];
+    keys.forEach(function (k) {
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = selected[k] !== false;
+      cb.addEventListener('change', function () {
+        selected[k] = cb.checked;
+        allBox.checked = boxes.every(function (b) { return b.checked; });
+        render();
+      });
+      boxes.push(cb);
+      var lab = el('label');
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(' ' + (Array.isArray(data) ? '[' + k + ']' : k)));
+      box.appendChild(lab);
+    });
+    allBox.addEventListener('change', function () {
+      keys.forEach(function (k, i) { selected[k] = allBox.checked; boxes[i].checked = allBox.checked; });
+      render();
+    });
+  }
+
+  // ---- 마인드맵 (SVG) ----
+  var palette = ['#42b983', '#1565c0', '#9c27b0', '#e65100', '#00838f', '#6d4c41'];
+  var mctx = document.createElement('canvas').getContext('2d');
+  mctx.font = '13px "Segoe UI", sans-serif';
+
+  function mmBuild(label, value, depth) {
+    var n = { label: label, value: value, depth: depth, kids: [], container: isObj(value), open: depth < 3 };
+    if (n.container) {
+      var arr = Array.isArray(value);
+      visibleKeys(value, depth).forEach(function (k) {
+        n.kids.push(mmBuild(arr ? '[' + k + ']' : k, value[k], depth + 1));
+      });
+    }
+    return n;
+  }
+
+  function mmText(n) {
+    var t;
+    if (n.container) t = (n.label === null ? '' : n.label + ' ') + '(' + n.kids.length + ')';
+    else t = (n.label === null ? '' : n.label + ': ') + leafText(n.value);
+    t = t.replace(/\s+/g, ' ');
+    return t.length > 50 ? t.slice(0, 49) + '…' : t;
+  }
+
+  function svgEl(tag, attrs) {
+    var e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function drawMind() {
+    var rowH = 32, padX = 12, gap = 56, cursor = 24, widths = [], xs = [], x = 20;
+    (function measure(n) {
+      n.text = (n.container ? (n.open ? '▾ ' : '▸ ') : '') + mmText(n);
+      n.w = Math.ceil(mctx.measureText(n.text).width) + padX * 2;
+      widths[n.depth] = Math.max(widths[n.depth] || 0, n.w);
+      if (n.container && n.open) n.kids.forEach(measure);
+    })(mm);
+    widths.forEach(function (w, i) { xs[i] = x; x += w + gap; });
+    (function lay(n) {
+      n.x = xs[n.depth];
+      if (n.container && n.open && n.kids.length) {
+        n.kids.forEach(lay);
+        n.y = (n.kids[0].y + n.kids[n.kids.length - 1].y) / 2;
+      } else { n.y = cursor; cursor += rowH; }
+    })(mm);
+    var W = x - gap + 20, H = cursor + 8;
+    var svg = svgEl('svg', { width: W, height: H, viewBox: '0 0 ' + W + ' ' + H });
+    var edges = svgEl('g', {}), boxes = svgEl('g', {});
+    svg.appendChild(edges); svg.appendChild(boxes);
+    (function paint(n) {
+      var color = palette[n.depth % palette.length];
+      var g = svgEl('g', { 'class': 'nd' + (n.container ? ' cont' : '') });
+      var title = svgEl('title', {});
+      title.textContent = (n.label === null ? '' : n.label + (n.container ? '' : ': ')) + (n.container ? '' : String(n.value));
+      g.appendChild(title);
+      g.appendChild(svgEl('rect', {
+        x: n.x, y: n.y - 13, width: n.w, height: 26, rx: 13,
+        fill: n.container ? color : '#fff', stroke: color, 'stroke-width': 1.5
+      }));
+      var t = svgEl('text', { x: n.x + padX, y: n.y + 4.5, fill: n.container ? '#fff' : '#2c3e50' });
+      t.textContent = n.text;
+      g.appendChild(t);
+      if (n.container) g.addEventListener('click', function () { n.open = !n.open; drawMind(); });
+      boxes.appendChild(g);
+      if (n.container && n.open) n.kids.forEach(function (c) {
+        var x1 = n.x + n.w, x2 = c.x, mx = (x1 + x2) / 2;
+        edges.appendChild(svgEl('path', { d: 'M' + x1 + ' ' + n.y + ' C' + mx + ' ' + n.y + ',' + mx + ' ' + c.y + ',' + x2 + ' ' + c.y }));
+        paint(c);
+      });
+    })(mm);
+    var box = $('mind');
+    var sx = box.scrollLeft, sy = box.scrollTop;
+    box.textContent = '';
+    box.appendChild(svg);
+    box.scrollLeft = sx; box.scrollTop = sy;
+  }
+
+  function mmSetAll(open) {
+    (function walk(n) { if (n.container) { n.open = n.depth === 0 || open; n.kids.forEach(walk); } })(mm);
+    drawMind();
+  }
+
   // ---- 트리 텍스트 (├── └──) ----
   function toTree(root) {
-    var lines = [isObj(root) ? (fileName || 'root') + ' ' + summary(root) : leafText(root)];
-    (function walk(node, prefix) {
-      var keys = keysOf(node), arr = Array.isArray(node);
+    var lines = [isObj(root) ? (fileName || 'root') + ' ' + summary(root, 0) : leafText(root)];
+    (function walk(node, prefix, depth) {
+      var keys = visibleKeys(node, depth), arr = Array.isArray(node);
       keys.forEach(function (k, i) {
         var last = i === keys.length - 1, v = node[k];
         lines.push(prefix + (last ? '└── ' : '├── ') + (arr ? '[' + k + ']' : k) +
                    (isObj(v) ? ' ' + summary(v) : ': ' + leafText(v)));
-        if (isObj(v)) walk(v, prefix + (last ? '    ' : '│   '));
+        if (isObj(v)) walk(v, prefix + (last ? '    ' : '│   '), depth + 1);
       });
-    })(isObj(root) ? root : {}, '');
+    })(isObj(root) ? root : {}, '', 0);
     return lines.join('\n');
   }
 
@@ -169,7 +309,9 @@
       try {
         data = JSON.parse(String(r.result).replace(/^﻿/, ''));
         fileName = file.name;
+        selected = {};
         $('error').textContent = '';
+        renderFilters();
         render();
       } catch (e) {
         $('error').textContent = '⚠ JSON 파싱 실패: ' + e.message;
@@ -196,13 +338,15 @@
     mode = m;
     $('modeData').classList.toggle('on', m === 'data');
     $('modeCode').classList.toggle('on', m === 'code');
+    $('modeMind').classList.toggle('on', m === 'mind');
     if (data !== undefined) render();
   }
   $('modeData').addEventListener('click', function () { setMode('data'); });
   $('modeCode').addEventListener('click', function () { setMode('code'); });
+  $('modeMind').addEventListener('click', function () { setMode('mind'); });
 
-  $('expand').addEventListener('click', function () { nodes.forEach(function (n) { n.set(true); }); });
-  $('collapse').addEventListener('click', function () { nodes.forEach(function (n) { n.set(false); }); });
+  $('expand').addEventListener('click', function () { if (mode === 'mind') mmSetAll(true); else nodes.forEach(function (n) { n.set(true); }); });
+  $('collapse').addEventListener('click', function () { if (mode === 'mind') mmSetAll(false); else nodes.forEach(function (n) { n.set(false); }); });
 
   $('copy').addEventListener('click', function () {
     var text = toTree(data), btn = $('copy');
