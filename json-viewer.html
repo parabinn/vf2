@@ -84,6 +84,8 @@
   var $ = function (id) { return document.getElementById(id); };
   var data, fileName = '', nodes = [], mode = 'data', selected = {}, mm = null, query = '', shown = null; // mode: 'data' = 값만, 'code' = JSON 문법 표시, 'mind' = 마인드맵
 
+  // Windows 메모장 등은 LF만 있으면 한 줄로 붙여넣으므로 Windows에서는 CRLF 사용
+  var EOL = /Win/i.test(navigator.platform || navigator.userAgent) ? '\r\n' : '\n';
   var isObj = function (v) { return v !== null && typeof v === 'object'; };
   var leafText = function (v) { return (typeof v === 'string' && mode === 'code') ? JSON.stringify(v) : String(v); };
   var keysOf = function (v) { return Array.isArray(v) ? v.map(function (_, i) { return i; }) : Object.keys(v); };
@@ -407,7 +409,7 @@
         if (isObj(v)) walk(v, prefix + (last ? '    ' : '│   '), path.concat([k]));
       });
     })(isObj(root) ? root : {}, '', []);
-    return lines.join('\n');
+    return lines.join(EOL);
   }
 
   // ---- 파일 로드 ----
@@ -498,7 +500,7 @@
     })(data, [], false);
     if (!lines.length) { $('error').textContent = '⚠ 복사할 검색 결과가 없습니다.'; return; }
     $('error').textContent = '';
-    copyText(lines.join('\n'), $('copyMatches'), lines.length + '줄 복사됨 ✓');
+    copyText(lines.join(EOL), $('copyMatches'), lines.length + '줄 복사됨 ✓');
   }
 
   function copyText(text, btn, doneMsg) {
