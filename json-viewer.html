@@ -77,7 +77,8 @@
       <input id="q" type="search" placeholder="🔍 항목 검색 (키 또는 값의 일부만 입력)" autocomplete="off">
       <span id="qinfo"></span>
       <select id="sep" title="일괄 복사 구분 방식">
-        <option value="tree">트리 형태</option>
+        <option value="tree">트리 (일치 항목만)</option>
+        <option value="treefull">트리 (상위 경로 포함)</option>
         <option value="both">콤마 + 줄바꿈</option>
         <option value="comma">콤마</option>
         <option value="nl">줄바꿈</option>
@@ -408,17 +409,40 @@
   }
 
   // ---- 트리 텍스트 (├── └──) ----
+  // node 하위를 ├── └── 로 lines에 추가
+  function walkTree(node, prefix, path, lines, noCount) {
+    var keys = visibleKeys(node, path), arr = Array.isArray(node);
+    keys.forEach(function (k, i) {
+      var last = i === keys.length - 1, v = node[k], p = path.concat([k]);
+      lines.push(prefix + (last ? '└── ' : '├── ') + (arr ? '[' + k + ']' : k) +
+                 (isObj(v) ? (noCount ? '' : ' ' + summary(v, p)) : ': ' + leafText(v)));
+      if (isObj(v)) walkTree(v, prefix + (last ? '    ' : '│   '), p, lines, noCount);
+    });
+  }
+
   function toTree(root, noCount) {
     var lines = [isObj(root) ? (fileName || 'root') + (noCount ? '' : ' ' + summary(root, [])) : leafText(root)];
-    (function walk(node, prefix, path) {
-      var keys = visibleKeys(node, path), arr = Array.isArray(node);
-      keys.forEach(function (k, i) {
-        var last = i === keys.length - 1, v = node[k];
-        lines.push(prefix + (last ? '└── ' : '├── ') + (arr ? '[' + k + ']' : k) +
-                   (isObj(v) ? (noCount ? '' : ' ' + summary(v, path.concat([k]))) : ': ' + leafText(v)));
-        if (isObj(v)) walk(v, prefix + (last ? '    ' : '│   '), path.concat([k]));
+    if (isObj(root)) walkTree(root, '', [], lines, noCount);
+    return lines.join(EOL);
+  }
+
+  // 검색 일치 항목만 (상위 경로 [0], floors 등은 생략) 최상위에 나열하고 각 항목의 내용은 트리로
+  function toMatchTree() {
+    var lines = [];
+    (function walk(v, path) {
+      var arr = Array.isArray(v);
+      visibleKeys(v, path).forEach(function (k) {
+        var c = v[k], p = path.concat([k]);
+        if (!arr && hasQ(k)) {                       // 키 일치: 해당 항목 + 하위 내용 전체
+          lines.push(k + (isObj(c) ? '' : ': ' + leafText(c)));
+          if (isObj(c)) walkTree(c, '', p, lines, true);
+        } else if (isObj(c)) {
+          walk(c, p);
+        } else if (hasQ(c)) {                        // 값 일치
+          lines.push(arr ? leafText(c) : k + ': ' + leafText(c));
+        }
       });
-    })(isObj(root) ? root : {}, '', []);
+    })(data, []);
     return lines.join(EOL);
   }
 
@@ -503,9 +527,11 @@
   function doCopyMatches() {
     if (data === undefined || !query) return;
     var lines = [];
-    if ($('sep').value === 'tree') {
+    var sv = $('sep').value;
+    if (sv === 'tree' || sv === 'treefull') {
+      var tt = sv === 'tree' ? toMatchTree() : toTree(data, true);
       $('error').textContent = '';
-      copyText(toTree(data, true), $('copyMatches'), '트리 복사됨 ✓');
+      copyText(tt, $('copyMatches'), '트리 복사됨 ✓');
       return;
     }
     (function walk(v, path, forced) {
