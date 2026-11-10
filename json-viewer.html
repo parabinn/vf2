@@ -35,7 +35,7 @@
 <div class="wrap">
   <h2>JSON Viewer</h2>
   <div id="drop">JSON 파일을 여기로 드래그하거나 클릭해서 선택
-    <input id="file" type="file" accept=".json,application/json" hidden>
+    <input id="file" type="file" accept=".json" hidden>
   </div>
   <p id="error"></p>
   <div id="viewer">
@@ -160,6 +160,10 @@
   // ---- 파일 로드 ----
   function load(file) {
     if (!file) return;
+    if (!/\.json$/i.test(file.name)) {
+      $('error').textContent = '⚠ JSON 파일(.json)만 열 수 있습니다. 선택한 파일: ' + file.name;
+      return;
+    }
     var r = new FileReader();
     r.onload = function () {
       try {
