@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JSON Viewer</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", sans-serif; color: #2c3e50; margin: 0; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 16px 40px; }
+  h2 { text-align: center; }
+  #drop { border: 2px dashed #aaa; border-radius: 8px; padding: 32px; text-align: center; color: #666; cursor: pointer; }
+  #drop.over { border-color: #42b983; background: #eefaf3; }
+  #error { color: #c62828; }
+  #viewer { display: none; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 16px 0 8px; }
+  #name { font-weight: bold; margin-right: auto; }
+  button { padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
+  button:hover { background: #f0f4f8; }
+  #tree { border: 1px solid #ddd; border-radius: 6px; padding: 12px; overflow: auto; max-height: 70vh;
+          font-family: Consolas, Menlo, monospace; font-size: 14px; line-height: 1.6; }
+  .row { white-space: pre-wrap; word-break: break-all; }
+  .row.click { cursor: pointer; }
+  .row.click:hover { background: #f0f4f8; }
+  .arrow { display: inline-block; width: 14px; font-size: 10px; color: #888; }
+  .children { margin-left: 18px; border-left: 1px dotted #ccc; padding-left: 6px; }
+  .key { color: #9c27b0; }
+  .punct { color: #555; margin-right: 4px; }
+  .summary { color: #999; font-style: italic; }
+  .string { color: #2e7d32; } .number { color: #1565c0; } .boolean { color: #e65100; } .null { color: #888; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>JSON Viewer</h2>
+  <div id="drop">JSON 파일을 여기로 드래그하거나 클릭해서 선택
+    <input id="file" type="file" accept=".json,application/json" hidden>
+  </div>
+  <p id="error"></p>
+  <div id="viewer">
+    <div class="toolbar">
+      <span id="name"></span>
+      <button id="expand">모두 펼치기</button>
+      <button id="collapse">모두 접기</button>
+      <button id="copy">클립보드 복사</button>
+      <button id="save">TXT 저장</button>
+    </div>
+    <div id="tree"></div>
+  </div>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var data, fileName = '', nodes = [];
+
+  var isObj = function (v) { return v !== null && typeof v === 'object'; };
+  var leafText = function (v) { return typeof v === 'string' ? JSON.stringify(v) : String(v); };
+  var summary = function (v) { return Array.isArray(v) ? (v.length ? '[' + v.length + ']' : '[]') : '{}'; };
+  var keysOf = function (v) { return Array.isArray(v) ? v.map(function (_, i) { return i; }) : Object.keys(v); };
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  // ---- 트리 렌더링 ----
+  function buildNode(label, value, depth) {
+    var node = el('div');
+    var row = el('div', 'row');
+    var arrow = el('span', 'arrow');
+    row.appendChild(arrow);
+    if (label !== null) {
+      row.appendChild(el('span', 'key', label));
+      row.appendChild(el('span', 'punct', ':'));
+    }
+    if (!isObj(value)) {
+      var t = value === null ? 'null' : typeof value;
+      row.appendChild(el('span', t, leafText(value)));
+      node.appendChild(row);
+      return node;
+    }
+    var arr = Array.isArray(value), keys = keysOf(value);
+    row.classList.add('click');
+    row.appendChild(el('span', 'punct', arr ? '[' : '{'));
+    var sum = el('span', 'summary', keys.length + (arr ? ' items ]' : ' keys }'));
+    row.appendChild(sum);
+    var kids = el('div', 'children');
+    keys.forEach(function (k) { kids.appendChild(buildNode(arr ? k : k, value[k], depth + 1)); });
+    var end = el('div', 'row');
+    end.appendChild(el('span', 'arrow'));
+    end.appendChild(el('span', 'punct', arr ? ']' : '}'));
+    kids.appendChild(end);
+    node.appendChild(row);
+    node.appendChild(kids);
+    var api = {
+      set: function (open) {
+        kids.style.display = open ? '' : 'none';
+        sum.style.display = open ? 'none' : '';
+        arrow.textContent = open ? '▼' : '▶';
+        api.open = open;
+      }
+    };
+    row.addEventListener('click', function () { api.set(!api.open); });
+    api.set(depth < 2);
+    nodes.push(api);
+    return node;
+  }
+
+  function render() {
+    nodes = [];
+    var tree = $('tree');
+    tree.textContent = '';
+    tree.appendChild(buildNode(null, data, 0));
+    $('name').textContent = fileName;
+    $('viewer').style.display = 'block';
+  }
+
+  // ---- 트리 텍스트 (├── └──) ----
+  function toTree(root) {
+    var lines = [isObj(root) ? (fileName || 'root') + ' ' + summary(root) : leafText(root)];
+    (function walk(node, prefix) {
+      var keys = keysOf(node), arr = Array.isArray(node);
+      keys.forEach(function (k, i) {
+        var last = i === keys.length - 1, v = node[k];
+        lines.push(prefix + (last ? '└── ' : '├── ') + (arr ? '[' + k + ']' : k) +
+                   (isObj(v) ? ' ' + summary(v) : ': ' + leafText(v)));
+        if (isObj(v)) walk(v, prefix + (last ? '    ' : '│   '));
+      });
+    })(isObj(root) ? root : {}, '');
+    return lines.join('\n');
+  }
+
+  // ---- 파일 로드 ----
+  function load(file) {
+    if (!file) return;
+    var r = new FileReader();
+    r.onload = function () {
+      try {
+        data = JSON.parse(String(r.result).replace(/^﻿/, ''));
+        fileName = file.name;
+        $('error').textContent = '';
+        render();
+      } catch (e) {
+        $('error').textContent = '⚠ JSON 파싱 실패: ' + e.message;
+        $('viewer').style.display = 'none';
+      }
+    };
+    r.onerror = function () { $('error').textContent = '⚠ 파일을 읽을 수 없습니다.'; };
+    r.readAsText(file);
+  }
+
+  var drop = $('drop');
+  drop.addEventListener('click', function () { $('file').click(); });
+  $('file').addEventListener('change', function (e) { load(e.target.files[0]); e.target.value = ''; });
+  drop.addEventListener('dragover', function (e) { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', function () { drop.classList.remove('over'); });
+  drop.addEventListener('drop', function (e) {
+    e.preventDefault(); drop.classList.remove('over'); load(e.dataTransfer.files[0]);
+  });
+  // 페이지 어디에 놓아도 브라우저가 파일을 열지 않도록
+  window.addEventListener('dragover', function (e) { e.preventDefault(); });
+  window.addEventListener('drop', function (e) { e.preventDefault(); if (e.target !== drop && !drop.contains(e.target)) load(e.dataTransfer.files[0]); });
+
+  $('expand').addEventListener('click', function () { nodes.forEach(function (n) { n.set(true); }); });
+  $('collapse').addEventListener('click', function () { nodes.forEach(function (n) { n.set(false); }); });
+
+  $('copy').addEventListener('click', function () {
+    var text = toTree(data), btn = $('copy');
+    function done() { btn.textContent = '복사됨 ✓'; setTimeout(function () { btn.textContent = '클립보드 복사'; }, 1500); }
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { $('error').textContent = '⚠ 복사 실패'; }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
+  });
+
+  $('save').addEventListener('click', function () {
+    var blob = new Blob([toTree(data)], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = (fileName.replace(/\.json$/i, '') || 'output') + '.txt';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+})();
+</script>
+</body>
+</html>
